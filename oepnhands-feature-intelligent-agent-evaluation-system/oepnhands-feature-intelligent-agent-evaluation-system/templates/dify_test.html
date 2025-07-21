@@ -1,0 +1,397 @@
+{% extends "base.html" %}
+
+{% block title %}Dify工作流测试 - 智能体评估系统{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h1 class="card-title">Dify工作流测试</h1>
+        <p class="card-subtitle">使用生成的问答对测试Dify工作流性能</p>
+    </div>
+    
+    <form id="difyTestForm">
+        <div class="row">
+            <div class="col-2">
+                <div class="form-group">
+                    <label class="form-label">上传DOCX文档</label>
+                    <div class="file-upload" id="fileUpload">
+                        <p>点击或拖拽上传DOCX文件</p>
+                        <p style="font-size: 0.8rem; color: #666;">支持多文件上传</p>
+                    </div>
+                    <div id="fileList" class="mt-2"></div>
+                </div>
+            </div>
+            
+            <div class="col-2">
+                <div class="form-group">
+                    <label class="form-label">生成温度</label>
+                    <input type="number" class="form-control" name="temperature" value="0.3" min="0" max="1" step="0.1" required>
+                    <small class="form-text">控制生成内容的随机性</small>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">请求延迟（秒）</label>
+                    <input type="number" class="form-control" name="delay" value="1" min="0" max="10" required>
+                    <small class="form-text">控制API请求频率，避免限流</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <button type="submit" class="btn btn-primary" id="testBtn">开始测试</button>
+        </div>
+    </form>
+</div>
+
+<!-- 智能体状态检查 -->
+<div class="card" id="agentStatusCard">
+    <div class="card-header">
+        <h2 class="card-title">智能体状态检查</h2>
+        <button class="btn btn-secondary" onclick="checkAgentStatus()">刷新状态</button>
+    </div>
+    
+    <div id="agentStatusList">
+        <!-- 动态生成智能体状态 -->
+    </div>
+</div>
+
+<!-- 进度显示 -->
+<div class="card hidden" id="progressCard">
+    <div class="card-header">
+        <h2 class="card-title">测试进度</h2>
+    </div>
+    
+    <div class="progress">
+        <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+    </div>
+    
+    <div class="mt-3">
+        <div id="statusText" class="mb-2">
+            <strong>状态：</strong><span id="statusSpan">准备中...</span>
+        </div>
+        <div id="taskId" class="mb-2">
+            <strong>任务ID：</strong><span id="taskIdText">-</span>
+        </div>
+        <div id="testProgress" class="mb-2">
+            <strong>测试进度：</strong><span id="progressText">0/0</span>
+        </div>
+    </div>
+</div>
+
+<!-- 结果显示 -->
+<div class="card hidden" id="resultCard">
+    <div class="card-header">
+        <h2 class="card-title">测试结果</h2>
+    </div>
+    
+    <div id="resultContent">
+        <!-- 动态生成结果内容 -->
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentTaskId = null;
+let taskPoller = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    // 初始化文件上传
+    const fileUpload = new DifyTestFileUpload('#fileUpload');
+    
+    // 检查智能体状态
+    checkAgentStatus();
+    
+    // 表单提交
+    document.getElementById('difyTestForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const files = fileUpload.getFiles();
+        if (files.length === 0) {
+            Message.error('请先上传DOCX文件');
+            return;
+        }
+        
+        await startDifyTest();
+    });
+});
+
+class DifyTestFileUpload extends FileUpload {
+    constructor(element) {
+        super(element, {
+            accept: '.docx',
+            multiple: true
+        });
+    }
+    
+    onFilesSelected(files) {
+        this.displayFiles(files);
+    }
+    
+    displayFiles(files) {
+        const fileList = document.getElementById('fileList');
+        let html = '<div class="mt-2"><strong>已选择文件：</strong></div>';
+        
+        Array.from(files).forEach(file => {
+            html += `
+                <div class="alert alert-info" style="padding: 0.5rem; margin: 0.25rem 0;">
+                    <small>${file.name} (${Utils.formatFileSize(file.size)})</small>
+                </div>
+            `;
+        });
+        
+        fileList.innerHTML = html;
+    }
+}
+
+async function checkAgentStatus() {
+    try {
+        const response = await API.get('/api/agents/status');
+        
+        const statusList = document.getElementById('agentStatusList');
+        
+        if (!response.configured) {
+            statusList.innerHTML = `
+                <div class="alert alert-warning">
+                    <strong>未配置智能体</strong><br>
+                    请先前往 <a href="/agents">智能体配置</a> 页面配置智能体。
+                </div>
+            `;
+            return;
+        }
+        
+        let html = '<div class="row">';
+        let allConnected = true;
+        
+        response.agents.forEach(agent => {
+            const statusClass = agent.status === 'connected' ? 'status-success' : 'status-error';
+            const statusText = agent.status === 'connected' ? '连接成功' : '连接失败';
+            
+            if (agent.status !== 'connected') {
+                allConnected = false;
+            }
+            
+            html += `
+                <div class="col-3">
+                    <div class="stat-card">
+                        <h3>${agent.name}</h3>
+                        <div class="status ${statusClass}">${statusText}</div>
+                        <p class="mt-2" style="font-size: 0.8rem; word-break: break-all;">${agent.url}</p>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        
+        if (!allConnected) {
+            html += `
+                <div class="alert alert-error mt-3">
+                    <strong>部分智能体连接失败</strong><br>
+                    请检查智能体配置或网络连接。
+                </div>
+            `;
+        } else {
+            html += `
+                <div class="alert alert-success mt-3">
+                    <strong>所有智能体连接正常</strong><br>
+                    可以开始测试。
+                </div>
+            `;
+        }
+        
+        statusList.innerHTML = html;
+        
+    } catch (error) {
+        console.error('获取智能体状态失败:', error);
+        const statusList = document.getElementById('agentStatusList');
+        statusList.innerHTML = `
+            <div class="alert alert-error">
+                <strong>获取智能体状态失败</strong><br>
+                ${error.message}
+            </div>
+        `;
+    }
+}
+
+async function startDifyTest() {
+    // 检查智能体状态
+    try {
+        const agentStatus = await API.get('/api/agents/status');
+        if (!agentStatus.configured) {
+            Message.error('请先配置智能体');
+            return;
+        }
+        
+        const connectedCount = agentStatus.agents.filter(agent => agent.status === 'connected').length;
+        if (connectedCount === 0) {
+            Message.error('没有可用的智能体连接');
+            return;
+        }
+    } catch (error) {
+        Message.error('检查智能体状态失败');
+        return;
+    }
+    
+    const form = document.getElementById('difyTestForm');
+    const formData = new FormData(form);
+    
+    const testBtn = document.getElementById('testBtn');
+    const progressCard = document.getElementById('progressCard');
+    const resultCard = document.getElementById('resultCard');
+    
+    try {
+        Loading.show(testBtn, '启动中...');
+        
+        const response = await API.postForm('/api/dify/test', formData);
+        currentTaskId = response.task_id;
+        
+        // 显示进度卡片
+        progressCard.classList.remove('hidden');
+        resultCard.classList.add('hidden');
+        
+        document.getElementById('taskIdText').textContent = currentTaskId;
+        document.getElementById('statusSpan').textContent = '正在测试智能体...';
+        
+        // 开始轮询任务状态
+        taskPoller = new TaskPoller(
+            currentTaskId,
+            updateProgress,
+            onComplete
+        );
+        taskPoller.start();
+        
+        Message.success('Dify测试任务已启动');
+        
+    } catch (error) {
+        console.error('启动测试失败:', error);
+        Message.error('启动失败: ' + error.message);
+    } finally {
+        Loading.hide(testBtn, '开始测试');
+    }
+}
+
+function updateProgress(task) {
+    const progressBar = document.getElementById('progressBar');
+    const statusSpan = document.getElementById('statusSpan');
+    const progressText = document.getElementById('progressText');
+    
+    if (task.status === 'running') {
+        progressBar.style.width = '50%';
+        statusSpan.textContent = '正在测试智能体...';
+        
+        // 如果有进度信息，显示具体进度
+        if (task.result && task.result.progress) {
+            progressText.textContent = task.result.progress;
+        }
+    } else if (task.status === 'pending') {
+        progressBar.style.width = '10%';
+        statusSpan.textContent = '任务排队中...';
+    }
+}
+
+function onComplete(task) {
+    const progressBar = document.getElementById('progressBar');
+    const statusSpan = document.getElementById('statusSpan');
+    const resultCard = document.getElementById('resultCard');
+    const resultContent = document.getElementById('resultContent');
+    
+    if (task.status === 'completed') {
+        progressBar.style.width = '100%';
+        statusSpan.textContent = 'Dify测试完成！';
+        
+        // 显示结果
+        const result = task.result || {};
+        let html = `
+            <div class="alert alert-success">
+                <strong>Dify测试完成！</strong>
+            </div>
+            
+            <div class="row">
+                <div class="col-2">
+                    <div class="stat-card">
+                        <div class="stat-number">${result.test_count || 0}</div>
+                        <div class="stat-label">测试问题数</div>
+                    </div>
+                </div>
+                
+                <div class="col-2">
+                    <div class="stat-card">
+                        <div class="stat-number">Excel</div>
+                        <div class="stat-label">输出格式</div>
+                        <div class="mt-2">
+                            <a href="/api/files/${result.output_file ? result.output_file.split('/').pop() : ''}" 
+                               class="btn btn-primary">下载文件</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        if (result.output_file) {
+            html += `
+                <div class="mt-3">
+                    <h3>测试结果文件</h3>
+                    <table class="table">
+                        <tr>
+                            <td><strong>文件名：</strong></td>
+                            <td>${result.output_file.split('/').pop()}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>测试问题数：</strong></td>
+                            <td>${result.test_count || 0}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>完成时间：</strong></td>
+                            <td>${Utils.formatDate(task.updated_at)}</td>
+                        </tr>
+                    </table>
+                    
+                    <div class="mt-3">
+                        <a href="/api/files/${result.output_file.split('/').pop()}" class="btn btn-primary">下载测试结果</a>
+                        <a href="/files" class="btn btn-secondary">查看所有文件</a>
+                        <a href="/similarity" class="btn btn-success">计算相似度评分</a>
+                    </div>
+                </div>
+            `;
+        }
+        
+        resultContent.innerHTML = html;
+        resultCard.classList.remove('hidden');
+        
+        Message.success('Dify测试完成！');
+        
+    } else if (task.status === 'failed') {
+        progressBar.style.width = '100%';
+        progressBar.style.backgroundColor = '#dc3545';
+        statusSpan.textContent = 'Dify测试失败';
+        
+        const error = task.result?.error || '未知错误';
+        resultContent.innerHTML = `
+            <div class="alert alert-error">
+                <strong>Dify测试失败：</strong>${error}
+            </div>
+            
+            <div class="mt-3">
+                <h3>可能的解决方案：</h3>
+                <ul>
+                    <li>检查智能体配置是否正确</li>
+                    <li>确认智能体API服务正常</li>
+                    <li>检查网络连接</li>
+                    <li>尝试增加请求延迟</li>
+                    <li>检查上传的文档格式</li>
+                </ul>
+                
+                <button class="btn btn-primary" onclick="location.reload()">重新尝试</button>
+                <button class="btn btn-secondary" onclick="checkAgentStatus()">检查智能体状态</button>
+            </div>
+        `;
+        resultCard.classList.remove('hidden');
+        
+        Message.error('Dify测试失败');
+    }
+    
+    currentTaskId = null;
+    taskPoller = null;
+}
+</script>
+{% endblock %}

@@ -1,0 +1,447 @@
+{% extends "base.html" %}
+
+{% block title %}相似度评分 - 智能体评估系统{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h1 class="card-title">相似度评分</h1>
+        <p class="card-subtitle">计算标准答案与Dify答案的语义相似度评分</p>
+    </div>
+    
+    <form id="similarityForm">
+        <div class="row">
+            <div class="col-2">
+                <div class="form-group">
+                    <label class="form-label">选择评估结果Excel文件</label>
+                    <div class="file-upload" id="fileUpload">
+                        <p>点击或拖拽上传Excel文件</p>
+                        <p style="font-size: 0.8rem; color: #666;">支持.xlsx格式</p>
+                    </div>
+                    <div id="fileList" class="mt-2"></div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">或选择已有文件</label>
+                    <select class="form-control form-select" id="existingFileSelect">
+                        <option value="">选择已有的测试结果文件</option>
+                    </select>
+                    <button type="button" class="btn btn-secondary mt-2" onclick="loadExistingFiles()">刷新文件列表</button>
+                </div>
+            </div>
+            
+            <div class="col-2">
+                <div class="form-group">
+                    <label class="form-label">API Key</label>
+                    <input type="text" class="form-control" name="api_key" placeholder="sk-..." required>
+                    <small class="form-text">用于调用相似度计算API</small>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">智能体数量</label>
+                    <div id="agentCountDisplay" class="form-control" style="background-color: #f8f9fa;">
+                        <span id="agentCountText">检测中...</span>
+                    </div>
+                    <small class="form-text">系统将自动检测智能体数量</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <button type="submit" class="btn btn-primary" id="calculateBtn">计算评分</button>
+        </div>
+    </form>
+</div>
+
+<!-- 智能体信息显示 -->
+<div class="card" id="agentInfoCard">
+    <div class="card-header">
+        <h2 class="card-title">智能体信息</h2>
+    </div>
+    
+    <div id="agentInfoList">
+        <!-- 动态生成智能体信息 -->
+    </div>
+</div>
+
+<!-- 进度显示 -->
+<div class="card hidden" id="progressCard">
+    <div class="card-header">
+        <h2 class="card-title">计算进度</h2>
+    </div>
+    
+    <div class="progress">
+        <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+    </div>
+    
+    <div class="mt-3">
+        <div id="statusText" class="mb-2">
+            <strong>状态：</strong><span id="statusSpan">准备中...</span>
+        </div>
+        <div id="taskId" class="mb-2">
+            <strong>任务ID：</strong><span id="taskIdText">-</span>
+        </div>
+        <div id="calculationProgress" class="mb-2">
+            <strong>计算进度：</strong><span id="progressText">0/0</span>
+        </div>
+    </div>
+</div>
+
+<!-- 结果显示 -->
+<div class="card hidden" id="resultCard">
+    <div class="card-header">
+        <h2 class="card-title">相似度评分结果</h2>
+    </div>
+    
+    <div id="resultContent">
+        <!-- 动态生成结果内容 -->
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentTaskId = null;
+let taskPoller = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    // 初始化文件上传
+    const fileUpload = new SimilarityFileUpload('#fileUpload');
+    
+    // 检查智能体信息
+    checkAgentInfo();
+    
+    // 加载已有文件
+    loadExistingFiles();
+    
+    // 表单提交
+    document.getElementById('similarityForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const files = fileUpload.getFiles();
+        const existingFile = document.getElementById('existingFileSelect').value;
+        
+        if (files.length === 0 && !existingFile) {
+            Message.error('请上传文件或选择已有文件');
+            return;
+        }
+        
+        await startSimilarityCalculation();
+    });
+    
+    // 已有文件选择变化
+    document.getElementById('existingFileSelect').addEventListener('change', function() {
+        if (this.value) {
+            // 清空文件上传
+            fileUpload.clearFiles();
+        }
+    });
+});
+
+class SimilarityFileUpload extends FileUpload {
+    constructor(element) {
+        super(element, {
+            accept: '.xlsx',
+            multiple: false
+        });
+    }
+    
+    onFilesSelected(files) {
+        this.displayFiles(files);
+        // 清空已有文件选择
+        document.getElementById('existingFileSelect').value = '';
+    }
+    
+    displayFiles(files) {
+        const fileList = document.getElementById('fileList');
+        if (files.length > 0) {
+            const file = files[0];
+            fileList.innerHTML = `
+                <div class="alert alert-info" style="padding: 0.5rem; margin: 0.25rem 0;">
+                    <small>${file.name} (${Utils.formatFileSize(file.size)})</small>
+                </div>
+            `;
+        } else {
+            fileList.innerHTML = '';
+        }
+    }
+    
+    clearFiles() {
+        this.fileInput.value = '';
+        this.displayFiles([]);
+    }
+}
+
+async function checkAgentInfo() {
+    try {
+        const response = await API.get('/api/agents/status');
+        
+        const agentCountText = document.getElementById('agentCountText');
+        const agentInfoList = document.getElementById('agentInfoList');
+        
+        if (!response.configured) {
+            agentCountText.textContent = '未配置';
+            agentInfoList.innerHTML = `
+                <div class="alert alert-warning">
+                    <strong>未配置智能体</strong><br>
+                    请先前往 <a href="/agents">智能体配置</a> 页面配置智能体。
+                </div>
+            `;
+            return;
+        }
+        
+        const agentCount = response.agents.length;
+        agentCountText.textContent = `${agentCount} 个智能体`;
+        
+        let html = '<div class="row">';
+        response.agents.forEach(agent => {
+            const statusClass = agent.status === 'connected' ? 'status-success' : 'status-error';
+            const statusText = agent.status === 'connected' ? '连接正常' : '连接失败';
+            
+            html += `
+                <div class="col-3">
+                    <div class="stat-card">
+                        <h4>${agent.name}</h4>
+                        <div class="status ${statusClass}">${statusText}</div>
+                        <p class="mt-2" style="font-size: 0.8rem;">将计算此智能体的相似度评分</p>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        
+        agentInfoList.innerHTML = html;
+        
+    } catch (error) {
+        console.error('获取智能体信息失败:', error);
+        document.getElementById('agentCountText').textContent = '获取失败';
+    }
+}
+
+async function loadExistingFiles() {
+    try {
+        const files = await API.get('/api/files');
+        const select = document.getElementById('existingFileSelect');
+        
+        // 清空选项
+        select.innerHTML = '<option value="">选择已有的测试结果文件</option>';
+        
+        // 过滤出可能的测试结果文件
+        const testFiles = files.filter(file => 
+            file.type === 'excel' && 
+            (file.name.includes('test') || file.name.includes('evaluation') || file.name.includes('dify'))
+        );
+        
+        testFiles.forEach(file => {
+            const option = document.createElement('option');
+            option.value = file.name;
+            option.textContent = `${file.name} (${Utils.formatFileSize(file.size)})`;
+            select.appendChild(option);
+        });
+        
+        if (testFiles.length === 0) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = '暂无可用的测试结果文件';
+            option.disabled = true;
+            select.appendChild(option);
+        }
+        
+    } catch (error) {
+        console.error('加载文件列表失败:', error);
+    }
+}
+
+async function startSimilarityCalculation() {
+    const form = document.getElementById('similarityForm');
+    const formData = new FormData(form);
+    
+    // 如果选择了已有文件，创建一个虚拟文件
+    const existingFile = document.getElementById('existingFileSelect').value;
+    if (existingFile) {
+        // 这里需要特殊处理，因为我们需要告诉后端使用已有文件
+        formData.append('existing_file', existingFile);
+    }
+    
+    const calculateBtn = document.getElementById('calculateBtn');
+    const progressCard = document.getElementById('progressCard');
+    const resultCard = document.getElementById('resultCard');
+    
+    try {
+        Loading.show(calculateBtn, '启动中...');
+        
+        const response = await API.postForm('/api/similarity/calculate', formData);
+        currentTaskId = response.task_id;
+        
+        // 显示进度卡片
+        progressCard.classList.remove('hidden');
+        resultCard.classList.add('hidden');
+        
+        document.getElementById('taskIdText').textContent = currentTaskId;
+        document.getElementById('statusSpan').textContent = '正在计算相似度...';
+        
+        // 开始轮询任务状态
+        taskPoller = new TaskPoller(
+            currentTaskId,
+            updateProgress,
+            onComplete
+        );
+        taskPoller.start();
+        
+        Message.success('相似度计算任务已启动');
+        
+    } catch (error) {
+        console.error('启动计算失败:', error);
+        Message.error('启动失败: ' + error.message);
+    } finally {
+        Loading.hide(calculateBtn, '计算评分');
+    }
+}
+
+function updateProgress(task) {
+    const progressBar = document.getElementById('progressBar');
+    const statusSpan = document.getElementById('statusSpan');
+    const progressText = document.getElementById('progressText');
+    
+    if (task.status === 'running') {
+        progressBar.style.width = '50%';
+        statusSpan.textContent = '正在计算相似度...';
+        
+        // 如果有进度信息，显示具体进度
+        if (task.result && task.result.progress) {
+            progressText.textContent = task.result.progress;
+        }
+    } else if (task.status === 'pending') {
+        progressBar.style.width = '10%';
+        statusSpan.textContent = '任务排队中...';
+    }
+}
+
+function onComplete(task) {
+    const progressBar = document.getElementById('progressBar');
+    const statusSpan = document.getElementById('statusSpan');
+    const resultCard = document.getElementById('resultCard');
+    const resultContent = document.getElementById('resultContent');
+    
+    if (task.status === 'completed') {
+        progressBar.style.width = '100%';
+        statusSpan.textContent = '相似度评分完成！';
+        
+        // 显示结果
+        const result = task.result || {};
+        let html = `
+            <div class="alert alert-success">
+                <strong>相似度评分完成！</strong>
+            </div>
+        `;
+        
+        // 显示各智能体的综合相似度评分均值
+        if (result.scores && Object.keys(result.scores).length > 0) {
+            html += '<div class="row">';
+            
+            let bestAgent = null;
+            let bestScore = -1;
+            
+            Object.entries(result.scores).forEach(([agentName, scores]) => {
+                if (scores.mean_score > bestScore) {
+                    bestScore = scores.mean_score;
+                    bestAgent = agentName;
+                }
+                
+                html += `
+                    <div class="col-3">
+                        <div class="stat-card">
+                            <div class="stat-number">${scores.mean_score.toFixed(3)}</div>
+                            <div class="stat-label">${agentName} 综合相似度评分均值</div>
+                            <div class="mt-2">
+                                <small>最高分: ${scores.max_score.toFixed(3)}</small><br>
+                                <small>最低分: ${scores.min_score.toFixed(3)}</small><br>
+                                <small>问题数: ${scores.count}</small>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            
+            // 标识最佳智能体
+            if (bestAgent) {
+                html += `
+                    <div class="alert alert-info mt-3">
+                        <strong>🏆 最佳表现智能体：${bestAgent}</strong><br>
+                        综合相似度评分均值：${bestScore.toFixed(3)}
+                    </div>
+                `;
+            }
+        }
+        
+        // 文件下载链接
+        if (result.output_file) {
+            html += `
+                <div class="mt-3">
+                    <h3>评分结果文件</h3>
+                    <table class="table">
+                        <tr>
+                            <td><strong>文件名：</strong></td>
+                            <td>${result.output_file.split('/').pop()}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>智能体数量：</strong></td>
+                            <td>${Object.keys(result.scores || {}).length}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>完成时间：</strong></td>
+                            <td>${Utils.formatDate(task.updated_at)}</td>
+                        </tr>
+                    </table>
+                    
+                    <div class="mt-3">
+                        <a href="/api/files/${result.output_file.split('/').pop()}" class="btn btn-primary">下载评分结果</a>
+                        <a href="/files" class="btn btn-secondary">查看所有文件</a>
+                        <a href="/analysis" class="btn btn-success">详细结果分析</a>
+                    </div>
+                </div>
+            `;
+        }
+        
+        resultContent.innerHTML = html;
+        resultCard.classList.remove('hidden');
+        
+        Message.success('相似度评分完成！');
+        
+    } else if (task.status === 'failed') {
+        progressBar.style.width = '100%';
+        progressBar.style.backgroundColor = '#dc3545';
+        statusSpan.textContent = '相似度评分失败';
+        
+        const error = task.result?.error || '未知错误';
+        resultContent.innerHTML = `
+            <div class="alert alert-error">
+                <strong>相似度评分失败：</strong>${error}
+            </div>
+            
+            <div class="mt-3">
+                <h3>可能的解决方案：</h3>
+                <ul>
+                    <li>检查API密钥是否正确</li>
+                    <li>确认上传的Excel文件格式正确</li>
+                    <li>检查文件中是否包含标准答案和智能体答案</li>
+                    <li>检查网络连接</li>
+                    <li>尝试使用较小的文件进行测试</li>
+                </ul>
+                
+                <button class="btn btn-primary" onclick="location.reload()">重新尝试</button>
+                <button class="btn btn-secondary" onclick="loadExistingFiles()">刷新文件列表</button>
+            </div>
+        `;
+        resultCard.classList.remove('hidden');
+        
+        Message.error('相似度评分失败');
+    }
+    
+    currentTaskId = null;
+    taskPoller = null;
+}
+</script>
+{% endblock %}

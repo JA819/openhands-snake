@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+
+{% block title %}系统仪表盘 - 智能体评估系统{% endblock %}
+
+{% block page_title %}📊 系统仪表盘{% endblock %}
+{% block page_description %}系统状态概览和统计信息{% endblock %}
+
+{% block content %}
+
+<!-- 系统状态 -->
+<div class="section">
+    <h2>🔍 系统状态</h2>
+    <button class="btn btn-secondary" onclick="refreshDashboard()">🔄 刷新数据</button>
+    
+    <div id="systemStatus">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="systemHealth">检查中...</div>
+                <div class="stat-label">系统健康状态</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-number" id="agentStatus">检查中...</div>
+                <div class="stat-label">智能体连接状态</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-number" id="diskUsage">计算中...</div>
+                <div class="stat-label">磁盘使用情况</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 统计概览 -->
+<div class="section">
+    <h2>📈 统计概览</h2>
+    
+    <div id="statsOverview">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="totalTasks">0</div>
+                <div class="stat-label">任务总数</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-number" id="completedTasks">0</div>
+                <div class="stat-label">已完成任务</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-number" id="failedTasks">0</div>
+                <div class="stat-label">失败任务</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-number" id="qaGenerationTasks">0</div>
+                <div class="stat-label">问答对生成</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-number" id="difyTestTasks">0</div>
+                <div class="stat-label">Dify测试</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-number" id="similarityTasks">0</div>
+                <div class="stat-label">相似度评分</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-number" id="pipelineTasks">0</div>
+                <div class="stat-label">完整流水线</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 最近任务 -->
+<div class="section">
+    <h2>📋 最近任务</h2>
+    
+    <div id="recentTasks">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>任务ID</th>
+                    <th>任务类型</th>
+                    <th>状态</th>
+                    <th>创建时间</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="recentTasksBody">
+                <!-- 动态生成 -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 文件统计 -->
+<div class="section">
+    <h2>📁 文件统计</h2>
+    
+    <div id="fileStats">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="totalFiles">0</div>
+                <div class="stat-label">输出文件总数</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-number" id="excelFiles">0</div>
+                <div class="stat-label">Excel文件</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-number" id="totalFileSize">0 MB</div>
+                <div class="stat-label">文件总大小</div>
+            </div>
+            
+            <div class="stat-card">
+                <div class="stat-number" id="latestFile">无</div>
+                <div class="stat-label">最新文件</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    refreshDashboard();
+    
+    // 每30秒自动刷新
+    setInterval(refreshDashboard, 30000);
+});
+
+async function refreshDashboard() {
+    try {
+        // 获取统计数据
+        const stats = await API.get('/api/dashboard/stats');
+        updateStats(stats);
+        
+        // 获取智能体状态
+        const agentStatus = await API.get('/api/agents/status');
+        updateAgentStatus(agentStatus);
+        
+        // 获取文件统计
+        const files = await API.get('/api/files');
+        updateFileStats(files);
+        
+        // 更新系统健康状态
+        updateSystemHealth();
+        
+    } catch (error) {
+        console.error('刷新仪表盘失败:', error);
+        Message.error('刷新数据失败');
+    }
+}
+
+function updateStats(stats) {
+    // 更新任务统计
+    document.getElementById('totalTasks').textContent = stats.total_tasks || 0;
+    document.getElementById('completedTasks').textContent = stats.status_counts.completed || 0;
+    document.getElementById('failedTasks').textContent = stats.status_counts.failed || 0;
+    
+    // 更新任务类型统计
+    document.getElementById('qaGenerationTasks').textContent = stats.type_counts.qa_generation || 0;
+    document.getElementById('difyTestTasks').textContent = stats.type_counts.dify_test || 0;
+    document.getElementById('similarityTasks').textContent = stats.type_counts.similarity_calculation || 0;
+    document.getElementById('pipelineTasks').textContent = stats.type_counts.full_pipeline || 0;
+    
+    // 更新最近任务表格
+    updateRecentTasks(stats.recent_tasks || []);
+}
+
+function updateRecentTasks(tasks) {
+    const tbody = document.getElementById('recentTasksBody');
+    
+    if (tasks.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center">暂无任务</td></tr>';
+        return;
+    }
+    
+    let html = '';
+    tasks.forEach(task => {
+        const statusClass = getStatusClass(task.status);
+        const statusText = getStatusText(task.status);
+        const typeText = getTypeText(task.type);
+        
+        html += `
+            <tr>
+                <td>${task.id.substring(0, 8)}...</td>
+                <td>${typeText}</td>
+                <td><span class="score-badge ${statusClass}">${statusText}</span></td>
+                <td>${Utils.formatDate(task.created_at)}</td>
+                <td>
+                    <a href="/tasks" class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">查看详情</a>
+                </td>
+            </tr>
+        `;
+    });
+    
+    tbody.innerHTML = html;
+}
+
+function updateAgentStatus(agentStatus) {
+    const statusElement = document.getElementById('agentStatus');
+    
+    if (!agentStatus.configured) {
+        statusElement.innerHTML = '<span class="score-badge score-medium">未配置</span>';
+        return;
+    }
+    
+    const connectedCount = agentStatus.agents.filter(agent => agent.status === 'connected').length;
+    const totalCount = agentStatus.agents.length;
+    
+    if (connectedCount === totalCount) {
+        statusElement.innerHTML = `<span class="score-badge score-high">${connectedCount}/${totalCount} 已连接</span>`;
+    } else {
+        statusElement.innerHTML = `<span class="score-badge score-low">${connectedCount}/${totalCount} 已连接</span>`;
+    }
+}
+
+function updateFileStats(files) {
+    const totalFiles = files.length;
+    const excelFiles = files.filter(file => file.type === 'excel').length;
+    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+    const latestFile = files.length > 0 ? files[0].name : '无';
+    
+    document.getElementById('totalFiles').textContent = totalFiles;
+    document.getElementById('excelFiles').textContent = excelFiles;
+    document.getElementById('totalFileSize').textContent = Utils.formatFileSize(totalSize);
+    document.getElementById('latestFile').textContent = latestFile.length > 20 ? latestFile.substring(0, 20) + '...' : latestFile;
+}
+
+function updateSystemHealth() {
+    // 简单的系统健康检查
+    const healthElement = document.getElementById('systemHealth');
+    healthElement.innerHTML = '<span class="score-badge score-high">正常</span>';
+    
+    // 这里可以添加更复杂的健康检查逻辑
+}
+
+function getStatusClass(status) {
+    const statusMap = {
+        'completed': 'score-high',
+        'failed': 'score-low',
+        'running': 'score-medium',
+        'pending': 'score-medium'
+    };
+    return statusMap[status] || 'score-medium';
+}
+
+function getStatusText(status) {
+    const statusMap = {
+        'completed': '已完成',
+        'failed': '失败',
+        'running': '运行中',
+        'pending': '等待中'
+    };
+    return statusMap[status] || status;
+}
+
+function getTypeText(type) {
+    const typeMap = {
+        'qa_generation': '问答对生成',
+        'dify_test': 'Dify测试',
+        'similarity_calculation': '相似度评分',
+        'full_pipeline': '完整流水线'
+    };
+    return typeMap[type] || type;
+}
+</script>
+{% endblock %}

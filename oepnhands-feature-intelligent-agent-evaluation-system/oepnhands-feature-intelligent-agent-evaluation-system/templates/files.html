@@ -1,0 +1,370 @@
+{% extends "base.html" %}
+
+{% block title %}文件管理 - 智能体评估系统{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h1 class="card-title">文件管理</h1>
+        <p class="card-subtitle">管理上传和输出的文件</p>
+        <button class="btn btn-secondary" onclick="refreshFiles()">刷新文件列表</button>
+    </div>
+</div>
+
+<!-- 文件统计 -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">文件统计</h2>
+    </div>
+    
+    <div class="row" id="fileStats">
+        <div class="col-4">
+            <div class="stat-card">
+                <div class="stat-number" id="totalFiles">0</div>
+                <div class="stat-label">文件总数</div>
+            </div>
+        </div>
+        
+        <div class="col-4">
+            <div class="stat-card">
+                <div class="stat-number" id="totalSize">0 MB</div>
+                <div class="stat-label">总大小</div>
+            </div>
+        </div>
+        
+        <div class="col-4">
+            <div class="stat-card">
+                <div class="stat-number" id="excelFiles">0</div>
+                <div class="stat-label">Excel文件</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 文件列表 -->
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">输出文件</h2>
+        <div>
+            <input type="text" class="form-control" id="searchInput" placeholder="搜索文件名..." style="width: 300px; display: inline-block;">
+            <select class="form-control form-select" id="typeFilter" style="width: 150px; display: inline-block; margin-left: 10px;">
+                <option value="">所有类型</option>
+                <option value="excel">Excel文件</option>
+                <option value="word">Word文档</option>
+                <option value="pdf">PDF文件</option>
+                <option value="text">文本文件</option>
+            </select>
+        </div>
+    </div>
+    
+    <div id="fileList">
+        <table class="table" data-sortable>
+            <thead>
+                <tr>
+                    <th data-sort="name">文件名</th>
+                    <th data-sort="type">类型</th>
+                    <th data-sort="size">大小</th>
+                    <th data-sort="created_at">创建时间</th>
+                    <th data-sort="modified_at">修改时间</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="fileTableBody">
+                <!-- 动态生成 -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 文件详情模态框 -->
+<div id="fileModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="modalTitle">文件详情</h3>
+            <button class="btn btn-secondary" onclick="closeModal()">关闭</button>
+        </div>
+        <div class="modal-body" id="modalBody">
+            <!-- 动态内容 -->
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.modal {
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-content {
+    background-color: white;
+    border-radius: 10px;
+    max-width: 800px;
+    width: 90%;
+    max-height: 80%;
+    overflow-y: auto;
+}
+
+.modal-header {
+    padding: 1rem;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-body {
+    padding: 1rem;
+}
+
+.file-type-icon {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    margin-right: 5px;
+    text-align: center;
+    font-weight: bold;
+    border-radius: 3px;
+    color: white;
+    font-size: 12px;
+    line-height: 20px;
+}
+
+.file-type-excel { background-color: #217346; }
+.file-type-word { background-color: #2b579a; }
+.file-type-pdf { background-color: #d83b01; }
+.file-type-text { background-color: #6c757d; }
+.file-type-unknown { background-color: #6c757d; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let allFiles = [];
+
+document.addEventListener('DOMContentLoaded', function() {
+    refreshFiles();
+    
+    // 搜索功能
+    document.getElementById('searchInput').addEventListener('input', filterFiles);
+    document.getElementById('typeFilter').addEventListener('change', filterFiles);
+});
+
+async function refreshFiles() {
+    try {
+        const files = await API.get('/api/files');
+        allFiles = files;
+        updateFileStats(files);
+        displayFiles(files);
+    } catch (error) {
+        console.error('获取文件列表失败:', error);
+        Message.error('获取文件列表失败');
+    }
+}
+
+function updateFileStats(files) {
+    const totalFiles = files.length;
+    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+    const excelFiles = files.filter(file => file.type === 'excel').length;
+    
+    document.getElementById('totalFiles').textContent = totalFiles;
+    document.getElementById('totalSize').textContent = Utils.formatFileSize(totalSize);
+    document.getElementById('excelFiles').textContent = excelFiles;
+}
+
+function displayFiles(files) {
+    const tbody = document.getElementById('fileTableBody');
+    
+    if (files.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center">暂无文件</td></tr>';
+        return;
+    }
+    
+    let html = '';
+    files.forEach(file => {
+        const typeIcon = getFileTypeIcon(file.type);
+        
+        html += `
+            <tr>
+                <td>
+                    ${typeIcon}
+                    <span title="${file.name}">${file.name.length > 30 ? file.name.substring(0, 30) + '...' : file.name}</span>
+                </td>
+                <td>${getFileTypeText(file.type)}</td>
+                <td>${Utils.formatFileSize(file.size)}</td>
+                <td>${Utils.formatDate(file.created_at)}</td>
+                <td>${Utils.formatDate(file.modified_at)}</td>
+                <td>
+                    <button class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem; margin-right: 0.25rem;" 
+                            onclick="downloadFile('${file.name}')">下载</button>
+                    <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem; margin-right: 0.25rem;" 
+                            onclick="viewFileDetails('${file.name}')">详情</button>
+                    <button class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" 
+                            onclick="deleteFile('${file.name}')">删除</button>
+                </td>
+            </tr>
+        `;
+    });
+    
+    tbody.innerHTML = html;
+}
+
+function filterFiles() {
+    const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+    const typeFilter = document.getElementById('typeFilter').value;
+    
+    let filteredFiles = allFiles;
+    
+    // 按文件名搜索
+    if (searchTerm) {
+        filteredFiles = filteredFiles.filter(file => 
+            file.name.toLowerCase().includes(searchTerm)
+        );
+    }
+    
+    // 按类型过滤
+    if (typeFilter) {
+        filteredFiles = filteredFiles.filter(file => file.type === typeFilter);
+    }
+    
+    displayFiles(filteredFiles);
+}
+
+function getFileTypeIcon(type) {
+    const iconMap = {
+        'excel': '<span class="file-type-icon file-type-excel">XL</span>',
+        'word': '<span class="file-type-icon file-type-word">WD</span>',
+        'pdf': '<span class="file-type-icon file-type-pdf">PDF</span>',
+        'text': '<span class="file-type-icon file-type-text">TXT</span>',
+        'unknown': '<span class="file-type-icon file-type-unknown">?</span>'
+    };
+    return iconMap[type] || iconMap['unknown'];
+}
+
+function getFileTypeText(type) {
+    const typeMap = {
+        'excel': 'Excel文件',
+        'word': 'Word文档',
+        'pdf': 'PDF文件',
+        'text': '文本文件',
+        'json': 'JSON文件',
+        'csv': 'CSV文件',
+        'unknown': '未知类型'
+    };
+    return typeMap[type] || typeMap['unknown'];
+}
+
+async function downloadFile(filename) {
+    try {
+        window.open(`/api/files/${filename}`, '_blank');
+        Message.success('文件下载已开始');
+    } catch (error) {
+        console.error('下载文件失败:', error);
+        Message.error('下载文件失败');
+    }
+}
+
+async function viewFileDetails(filename) {
+    try {
+        const file = allFiles.find(f => f.name === filename);
+        if (!file) {
+            Message.error('文件不存在');
+            return;
+        }
+        
+        const modalTitle = document.getElementById('modalTitle');
+        const modalBody = document.getElementById('modalBody');
+        const modal = document.getElementById('fileModal');
+        
+        modalTitle.textContent = `文件详情 - ${filename}`;
+        
+        let html = `
+            <table class="table">
+                <tr>
+                    <td><strong>文件名：</strong></td>
+                    <td>${file.name}</td>
+                </tr>
+                <tr>
+                    <td><strong>文件类型：</strong></td>
+                    <td>${getFileTypeText(file.type)}</td>
+                </tr>
+                <tr>
+                    <td><strong>文件大小：</strong></td>
+                    <td>${Utils.formatFileSize(file.size)}</td>
+                </tr>
+                <tr>
+                    <td><strong>创建时间：</strong></td>
+                    <td>${Utils.formatDate(file.created_at)}</td>
+                </tr>
+                <tr>
+                    <td><strong>修改时间：</strong></td>
+                    <td>${Utils.formatDate(file.modified_at)}</td>
+                </tr>
+            </table>
+            
+            <div class="mt-3">
+                <h4>操作</h4>
+                <button class="btn btn-primary" onclick="downloadFile('${filename}')">下载文件</button>
+                <button class="btn btn-secondary" onclick="Utils.copyToClipboard('/api/files/${filename}')">复制链接</button>
+        `;
+        
+        // 根据文件类型添加特定操作
+        if (file.type === 'excel') {
+            if (filename.includes('similarity') || filename.includes('score')) {
+                html += `<a href="/analysis" class="btn btn-success">分析结果</a>`;
+            }
+            if (filename.includes('qa') || filename.includes('问答')) {
+                html += `<a href="/dify-test" class="btn btn-success">测试智能体</a>`;
+            }
+        }
+        
+        html += `
+                <button class="btn btn-danger" onclick="deleteFile('${filename}'); closeModal();">删除文件</button>
+            </div>
+        `;
+        
+        modalBody.innerHTML = html;
+        modal.style.display = 'flex';
+        
+    } catch (error) {
+        console.error('查看文件详情失败:', error);
+        Message.error('查看文件详情失败');
+    }
+}
+
+async function deleteFile(filename) {
+    if (!confirm(`确定要删除文件 "${filename}" 吗？此操作不可撤销。`)) {
+        return;
+    }
+    
+    try {
+        await API.delete(`/api/files/${filename}`);
+        Message.success('文件已删除');
+        refreshFiles();
+    } catch (error) {
+        console.error('删除文件失败:', error);
+        Message.error('删除文件失败');
+    }
+}
+
+function closeModal() {
+    document.getElementById('fileModal').style.display = 'none';
+}
+
+// 点击模态框外部关闭
+document.getElementById('fileModal').addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeModal();
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+python-multipart
+jinja2
+aiofiles
+python-docx
+openpyxl
+pandas
+requests
+scikit-learn
+jieba
+numpy
+aiosqlite
+aiohttp
