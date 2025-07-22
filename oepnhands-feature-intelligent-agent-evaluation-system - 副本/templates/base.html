@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}智能体评估系统{% endblock %}</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+    <link href="/static/css/style.css" rel="stylesheet">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <div class="app-container">
+        <!-- 侧边导航栏 -->
+        <nav class="sidebar">
+            <div class="logo">
+                <h1>🤖 智能体评估系统</h1>
+                <p>智能评估与分析平台</p>
+            </div>
+            
+            <ul class="nav-menu">
+                <li class="nav-item">
+                    <a href="/agents" class="nav-link">
+                        <span class="nav-icon">🤖</span>
+                        <span>智能体配置</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/dashboard" class="nav-link">
+                        <span class="nav-icon">📊</span>
+                        <span>系统仪表盘</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/pipeline" class="nav-link">
+                        <span class="nav-icon">🚀</span>
+                        <span>完整流水线</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/qa-generation" class="nav-link">
+                        <span class="nav-icon">📝</span>
+                        <span>问答对生成</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/dify-test" class="nav-link">
+                        <span class="nav-icon">🧪</span>
+                        <span>Dify测试</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/similarity" class="nav-link">
+                        <span class="nav-icon">📈</span>
+                        <span>相似度评分</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/analysis" class="nav-link">
+                        <span class="nav-icon">📋</span>
+                        <span>结果分析</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/files" class="nav-link">
+                        <span class="nav-icon">📁</span>
+                        <span>文件管理</span>
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="/tasks" class="nav-link">
+                        <span class="nav-icon">⚙️</span>
+                        <span>任务管理</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+        
+        <!-- 主内容区域 -->
+        <main class="main-content">
+            <div class="page active">
+                <div class="page-header">
+                    <h1>{% block page_title %}智能体评估系统{% endblock %}</h1>
+                    <p>{% block page_description %}智能评估与分析平台{% endblock %}</p>
+                </div>
+                <div class="page-content">
+                    {% block content %}{% endblock %}
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 文件上传区域 -->
+    <div id="fileUploadZone"></div>
+
+    <!-- JavaScript -->
+    <script src="/static/js/common.js"></script>
+    <script src="/static/js/fileUpload.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const fileUpload = new FileUpload('fileUploadZone', {
+            accept: '.docx',
+            multiple: true,
+            maxSize: 10 * 1024 * 1024
+        });
+    });
+    </script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

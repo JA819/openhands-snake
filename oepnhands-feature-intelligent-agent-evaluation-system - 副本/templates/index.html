@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}首页 - 智能体评估系统{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h1 class="card-title">欢迎使用智能体评估系统</h1>
+        <p class="card-subtitle">一站式智能体性能评估和分析平台</p>
+    </div>
+    
+    <div class="row">
+        <div class="col-3">
+            <div class="stat-card">
+                <div class="stat-number">1</div>
+                <div class="stat-label">智能体配置</div>
+                <p class="mt-2">配置多个智能体API，支持1-3个智能体同时测试</p>
+                <a href="/agents" class="btn btn-primary">开始配置</a>
+            </div>
+        </div>
+        
+        <div class="col-3">
+            <div class="stat-card">
+                <div class="stat-number">2</div>
+                <div class="stat-label">问答对生成</div>
+                <p class="mt-2">从DOCX文档自动生成标准问答对，支持批量处理</p>
+                <a href="/qa-generation" class="btn btn-primary">生成问答对</a>
+            </div>
+        </div>
+        
+        <div class="col-3">
+            <div class="stat-card">
+                <div class="stat-number">3</div>
+                <div class="stat-label">智能体测试</div>
+                <p class="mt-2">使用生成的问答对测试智能体性能</p>
+                <a href="/dify-test" class="btn btn-primary">开始测试</a>
+            </div>
+        </div>
+        
+        <div class="col-3">
+            <div class="stat-card">
+                <div class="stat-number">4</div>
+                <div class="stat-label">相似度评分</div>
+                <p class="mt-2">计算标准答案与智能体答案的语义相似度</p>
+                <a href="/similarity" class="btn btn-primary">计算评分</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-2">
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">快速开始</h2>
+            </div>
+            
+            <div class="mb-3">
+                <h3>完整流水线处理</h3>
+                <p>一键完成从文档处理到相似度评分的完整流程</p>
+                <a href="/pipeline" class="btn btn-success">启动流水线</a>
+            </div>
+            
+            <div class="mb-3">
+                <h3>系统状态监控</h3>
+                <p>查看系统健康状态和任务执行情况</p>
+                <a href="/dashboard" class="btn btn-secondary">查看仪表盘</a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-2">
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">功能特性</h2>
+            </div>
+            
+            <ul style="list-style-type: none; padding: 0;">
+                <li class="mb-2">✅ 支持多智能体并行测试</li>
+                <li class="mb-2">✅ 自动化问答对生成</li>
+                <li class="mb-2">✅ 多维度相似度评分</li>
+                <li class="mb-2">✅ 详细的结果分析</li>
+                <li class="mb-2">✅ 任务进度实时监控</li>
+                <li class="mb-2">✅ 文件管理和下载</li>
+                <li class="mb-2">✅ 可视化数据展示</li>
+                <li class="mb-2">✅ 响应式Web界面</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h2 class="card-title">使用流程</h2>
+    </div>
+    
+    <div class="row">
+        <div class="col">
+            <div style="text-align: center; padding: 2rem;">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; font-size: 1.5rem; font-weight: bold;">1</div>
+                <h3>配置智能体</h3>
+                <p>设置智能体API地址和密钥</p>
+            </div>
+        </div>
+        
+        <div class="col">
+            <div style="text-align: center; padding: 2rem;">
+                <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; font-size: 1.5rem; font-weight: bold;">2</div>
+                <h3>上传文档</h3>
+                <p>上传DOCX文档生成问答对</p>
+            </div>
+        </div>
+        
+        <div class="col">
+            <div style="text-align: center; padding: 2rem;">
+                <div style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: white; width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; font-size: 1.5rem; font-weight: bold;">3</div>
+                <h3>执行测试</h3>
+                <p>智能体回答问题并记录结果</p>
+            </div>
+        </div>
+        
+        <div class="col">
+            <div style="text-align: center; padding: 2rem;">
+                <div style="background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); color: #333; width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; font-size: 1.5rem; font-weight: bold;">4</div>
+                <h3>分析结果</h3>
+                <p>计算相似度并生成分析报告</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

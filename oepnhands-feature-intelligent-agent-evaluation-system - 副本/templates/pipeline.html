@@ -1,0 +1,432 @@
+{% extends "base.html" %}
+
+{% block title %}完整流水线处理 - 智能体评估系统{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h1 class="card-title">完整流水线处理</h1>
+        <p class="card-subtitle">一键完成从文档处理到相似度评分的完整流程</p>
+    </div>
+    
+    <form id="pipelineForm">
+        <div class="row">
+            <div class="col-2">
+                <div class="form-group">
+                    <label class="form-label">上传DOCX文档</label>
+                    <div class="file-upload" id="fileUpload">
+                        <div class="file-upload-content">
+                            <i class="fas fa-cloud-upload-alt file-upload-icon"></i>
+                            <div class="file-upload-text">
+                                <p class="file-upload-main-text">点击或拖拽上传DOCX文件</p>
+                                <p class="file-upload-sub-text">支持多文件上传</p>
+                            </div>
+                        </div>
+                        <button type="button" class="file-upload-button">选择文件</button>
+                    </div>
+                    <div id="fileList" class="mt-2"></div>
+                </div>
+            </div>
+            
+            <div class="col-2">
+                <div class="form-group">
+                    <label class="form-label">最大段落数</label>
+                    <input type="number" class="form-control" name="max_paragraphs" value="20" min="1" max="100" required>
+                    <small class="form-text">随机抽取的段落数量</small>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">生成温度</label>
+                    <input type="number" class="form-control" name="temperature" value="0.3" min="0" max="1" step="0.1" required>
+                    <small class="form-text">模型生成的随机性</small>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">请求延迟（秒）</label>
+                    <input type="number" class="form-control" name="delay" value="1" min="0" max="10" required>
+                    <small class="form-text">控制API请求频率</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <button type="submit" class="btn btn-primary" id="startBtn">启动完整流水线</button>
+            <button type="button" class="btn btn-danger hidden" id="stopBtn" onclick="stopPipeline()">中止流水线</button>
+        </div>
+    </form>
+</div>
+
+<!-- 进度显示 -->
+<div class="card hidden" id="progressCard">
+    <div class="card-header">
+        <h2 class="card-title">任务执行进度</h2>
+    </div>
+    
+    <div class="progress">
+        <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+    </div>
+    
+    <div class="mt-3">
+        <div id="currentStep" class="mb-2">
+            <strong>当前步骤：</strong><span id="stepText">准备中...</span>
+        </div>
+        <div id="taskId" class="mb-2">
+            <strong>任务ID：</strong><span id="taskIdText">-</span>
+        </div>
+        <div id="elapsedTime" class="mb-2">
+            <strong>已用时间：</strong><span id="timeText">0秒</span>
+        </div>
+    </div>
+    
+    <div id="stepDetails" class="mt-3">
+        <!-- 步骤详情 -->
+    </div>
+</div>
+
+<!-- 结果显示 -->
+<div class="card hidden" id="resultCard">
+    <div class="card-header">
+        <h2 class="card-title">处理结果</h2>
+    </div>
+    
+    <div id="resultContent">
+        <!-- 动态生成结果内容 -->
+    </div>
+</div>
+
+<!-- 在表单中使用 -->
+<div class="form-group">
+    <label class="form-label">选择DOCX文档 (支持多文件):</label>
+    <div id="fileUploadZone"></div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const fileUpload = new FileUpload('fileUploadZone', {
+        accept: '.docx',
+        multiple: true
+    });
+});
+</script>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentTaskId = null;
+let taskPoller = null;
+let startTime = null;
+let timeInterval = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    // 初始化文件上传
+    const fileUpload = new PipelineFileUpload('#fileUpload');
+    
+    // 表单提交
+    document.getElementById('pipelineForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const files = fileUpload.getFiles();
+        if (files.length === 0) {
+            Message.error('请先上传DOCX文件');
+            return;
+        }
+        
+        // 检查智能体配置
+        try {
+            const agentStatus = await API.get('/api/agents/status');
+            if (!agentStatus.configured) {
+                Message.error('请先配置智能体');
+                return;
+            }
+        } catch (error) {
+            Message.error('检查智能体状态失败');
+            return;
+        }
+        
+        await startPipeline();
+    });
+});
+
+class PipelineFileUpload extends FileUpload {
+    constructor(element) {
+        super(element, {
+            accept: '.docx',
+            multiple: true
+        });
+    }
+    
+    onFilesSelected(files) {
+        this.displayFiles(files);
+    }
+    
+    displayFiles(files) {
+        const fileList = document.getElementById('fileList');
+        let html = '<div class="mt-2"><strong>已选择文件：</strong></div>';
+        
+        Array.from(files).forEach(file => {
+            html += `
+                <div class="alert alert-info" style="padding: 0.5rem; margin: 0.25rem 0;">
+                    <small>${file.name} (${Utils.formatFileSize(file.size)})</small>
+                </div>
+            `;
+        });
+        
+        fileList.innerHTML = html;
+    }
+}
+
+async function startPipeline() {
+    const form = document.getElementById('pipelineForm');
+    const formData = new FormData(form);
+    
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const progressCard = document.getElementById('progressCard');
+    const resultCard = document.getElementById('resultCard');
+    
+    try {
+        Loading.show(startBtn, '启动中...');
+        
+        const response = await API.postForm('/api/pipeline/start', formData);
+        currentTaskId = response.task_id;
+        
+        // 显示进度卡片
+        progressCard.classList.remove('hidden');
+        resultCard.classList.add('hidden');
+        
+        // 更新UI
+        startBtn.classList.add('hidden');
+        stopBtn.classList.remove('hidden');
+        document.getElementById('taskIdText').textContent = currentTaskId;
+        
+        // 开始计时
+        startTime = Date.now();
+        timeInterval = setInterval(updateElapsedTime, 1000);
+        
+        // 开始轮询任务状态
+        taskPoller = new TaskPoller(
+            currentTaskId,
+            updateTaskProgress,
+            onTaskComplete
+        );
+        taskPoller.start();
+        
+        Message.success('流水线已启动');
+        
+    } catch (error) {
+        console.error('启动流水线失败:', error);
+        Message.error('启动失败: ' + error.message);
+    } finally {
+        Loading.hide(startBtn, '启动完整流水线');
+    }
+}
+
+function updateTaskProgress(task) {
+    const stepText = document.getElementById('stepText');
+    const progressBar = document.getElementById('progressBar');
+    
+    let progress = 0;
+    let stepName = '准备中...';
+    
+    if (task.status === 'running') {
+        const result = task.result || {};
+        const step = result.step || '';
+        
+        switch (step) {
+            case '生成问答对':
+                progress = 25;
+                stepName = '正在生成问答对...';
+                break;
+            case '测试智能体':
+                progress = 50;
+                stepName = '正在测试智能体...';
+                break;
+            case '计算相似度':
+                progress = 75;
+                stepName = '正在计算相似度...';
+                break;
+            default:
+                progress = 10;
+                stepName = '流水线已启动，正在处理...';
+        }
+    }
+    
+    stepText.textContent = stepName;
+    progressBar.style.width = progress + '%';
+}
+
+function onTaskComplete(task) {
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const progressBar = document.getElementById('progressBar');
+    const stepText = document.getElementById('stepText');
+    const resultCard = document.getElementById('resultCard');
+    const resultContent = document.getElementById('resultContent');
+    
+    // 停止计时
+    if (timeInterval) {
+        clearInterval(timeInterval);
+        timeInterval = null;
+    }
+    
+    // 更新UI
+    startBtn.classList.remove('hidden');
+    stopBtn.classList.add('hidden');
+    
+    if (task.status === 'completed') {
+        progressBar.style.width = '100%';
+        stepText.textContent = '流水线处理完成！';
+        
+        // 显示结果
+        displayResults(task.result);
+        resultCard.classList.remove('hidden');
+        
+        Message.success('流水线处理完成！');
+        
+    } else if (task.status === 'failed') {
+        stepText.textContent = '流水线处理失败';
+        
+        const error = task.result?.error || '未知错误';
+        resultContent.innerHTML = `
+            <div class="alert alert-error">
+                <strong>处理失败：</strong>${error}
+            </div>
+        `;
+        resultCard.classList.remove('hidden');
+        
+        Message.error('流水线处理失败');
+    }
+    
+    currentTaskId = null;
+    taskPoller = null;
+}
+
+function displayResults(result) {
+    const resultContent = document.getElementById('resultContent');
+    
+    let html = '<div class="row">';
+    
+    // 问答对生成结果
+    if (result.qa_file) {
+        html += `
+            <div class="col-3">
+                <div class="stat-card">
+                    <div class="stat-number">${result.qa_count || 0}</div>
+                    <div class="stat-label">生成问答对</div>
+                    <div class="mt-2">
+                        <a href="/api/files/${result.qa_file.split('/').pop()}" class="btn btn-secondary" style="font-size: 0.8rem;">下载文件</a>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // 智能体测试结果
+    if (result.test_file) {
+        html += `
+            <div class="col-3">
+                <div class="stat-card">
+                    <div class="stat-number">${result.test_count || 0}</div>
+                    <div class="stat-label">测试问题数</div>
+                    <div class="mt-2">
+                        <a href="/api/files/${result.test_file.split('/').pop()}" class="btn btn-secondary" style="font-size: 0.8rem;">下载文件</a>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    // 相似度评分结果
+    if (result.similarity_file && result.scores) {
+        const avgScore = Object.values(result.scores).reduce((sum, agent) => sum + agent.mean_score, 0) / Object.keys(result.scores).length;
+        
+        html += `
+            <div class="col-3">
+                <div class="stat-card">
+                    <div class="stat-number">${avgScore.toFixed(3)}</div>
+                    <div class="stat-label">平均相似度</div>
+                    <div class="mt-2">
+                        <a href="/api/files/${result.similarity_file.split('/').pop()}" class="btn btn-secondary" style="font-size: 0.8rem;">下载文件</a>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        html += `
+            <div class="col-3">
+                <div class="stat-card">
+                    <div class="stat-number">${Object.keys(result.scores).length}</div>
+                    <div class="stat-label">智能体数量</div>
+                    <div class="mt-2">
+                        <a href="/analysis" class="btn btn-primary" style="font-size: 0.8rem;">查看分析</a>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+    
+    html += '</div>';
+    
+    // 详细评分信息
+    if (result.scores) {
+        html += '<div class="mt-3"><h3>各智能体评分详情</h3><div class="row">';
+        
+        Object.entries(result.scores).forEach(([agentName, scores]) => {
+            html += `
+                <div class="col-3">
+                    <div class="card" style="margin: 0.5rem 0;">
+                        <div style="padding: 1rem;">
+                            <h4>${agentName}</h4>
+                            <p><strong>平均分：</strong>${scores.mean_score.toFixed(3)}</p>
+                            <p><strong>最高分：</strong>${scores.max_score.toFixed(3)}</p>
+                            <p><strong>最低分：</strong>${scores.min_score.toFixed(3)}</p>
+                            <p><strong>问题数：</strong>${scores.count}</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += '</div></div>';
+    }
+    
+    resultContent.innerHTML = html;
+}
+
+function stopPipeline() {
+    if (currentTaskId && taskPoller) {
+        taskPoller.stop();
+        
+        // 这里可以添加取消任务的API调用
+        // await API.post(`/api/tasks/${currentTaskId}/cancel`);
+        
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        
+        startBtn.classList.remove('hidden');
+        stopBtn.classList.add('hidden');
+        
+        if (timeInterval) {
+            clearInterval(timeInterval);
+            timeInterval = null;
+        }
+        
+        Message.warning('流水线已中止');
+        
+        currentTaskId = null;
+        taskPoller = null;
+    }
+}
+
+function updateElapsedTime() {
+    if (startTime) {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const minutes = Math.floor(elapsed / 60);
+        const seconds = elapsed % 60;
+        
+        const timeText = minutes > 0 ? `${minutes}分${seconds}秒` : `${seconds}秒`;
+        document.getElementById('timeText').textContent = timeText;
+    }
+}
+</script>
+{% endblock %}

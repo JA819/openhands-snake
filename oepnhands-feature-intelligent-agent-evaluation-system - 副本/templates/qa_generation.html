@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+
+{% block title %}问答对生成 - 智能体评估系统{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h1 class="card-title">问答对生成</h1>
+        <p class="card-subtitle">从文档中生成问答对数据集</p>
+    </div>
+    
+    <form id="qaForm">
+        <div class="row">
+            <div class="col-2">
+                <div class="form-group">
+                    <label class="form-label">上传DOCX文档</label>
+                    <div class="file-upload" id="fileUpload">
+                        <p>点击或拖拽上传DOCX文件</p>
+                        <p style="font-size: 0.8rem; color: #666;">支持多文件上传</p>
+                    </div>
+                    <div id="fileList" class="mt-2"></div>
+                </div>
+            </div>
+            
+            <div class="col-2">
+                <div class="form-group">
+                    <label class="form-label">最大段落数</label>
+                    <input type="number" class="form-control" name="max_paragraphs" value="20" min="1" max="100" required>
+                    <small class="form-text">随机抽取的段落数量</small>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">生成温度</label>
+                    <input type="number" class="form-control" name="temperature" value="0.3" min="0" max="1" step="0.1" required>
+                    <small class="form-text">模型生成的随机性</small>
+                </div>
+            </div>
+        </div>
+        
+        <div class="form-group">
+            <button type="submit" class="btn btn-primary" id="startBtn">开始生成</button>
+            <button type="button" class="btn btn-danger hidden" id="stopBtn">停止生成</button>
+        </div>
+    </form>
+</div>
+
+<!-- 进度显示 -->
+<div class="card hidden" id="progressCard">
+    <div class="card-header">
+        <h2 class="card-title">生成进度</h2>
+    </div>
+    
+    <div class="progress">
+        <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+    </div>
+    
+    <div class="mt-3">
+        <div id="statusText" class="mb-2">
+            <strong>状态：</strong><span id="statusSpan">准备中...</span>
+        </div>
+        <div id="taskId" class="mb-2">
+            <strong>任务ID：</strong><span id="taskIdText">-</span>
+        </div>
+    </div>
+</div>
+
+<!-- 结果显示 -->
+<div class="card hidden" id="resultCard">
+    <div class="card-header">
+        <h2 class="card-title">处理结果</h2>
+    </div>
+    
+    <div id="resultContent">
+        <!-- 动态生成结果内容 -->
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentTaskId = null;
+let taskPoller = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    // 初始化文件上传
+    const fileUpload = new QAFileUpload('#fileUpload');
+    
+    // 表单提交
+    document.getElementById('qaForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const files = fileUpload.getFiles();
+        if (files.length === 0) {
+            Message.error('请先上传DOCX文件');
+            return;
+        }
+        
+        await startGeneration(e);
+    });
+});
+
+class QAFileUpload extends FileUpload {
+    constructor(element) {
+        super(element, {
+            accept: '.docx',
+            multiple: true
+        });
+    }
+    
+    onFilesSelected(files) {
+        this.displayFiles(files);
+    }
+    
+    displayFiles(files) {
+        const fileList = document.getElementById('fileList');
+        let html = '<div class="mt-2"><strong>已选择文件：</strong></div>';
+        
+        Array.from(files).forEach(file => {
+            html += `
+                <div class="alert alert-info" style="padding: 0.5rem; margin: 0.25rem 0;">
+                    <small>${file.name} (${Utils.formatFileSize(file.size)})</small>
+                </div>
+            `;
+        });
+        
+        fileList.innerHTML = html;
+    }
+}
+
+async function startGeneration(event) {
+    event.preventDefault();
+    const form = document.getElementById('qaForm');
+    const formData = new FormData(form);
+    
+    try {
+        Loading.show(document.getElementById('startBtn'), '生成中...');
+        
+        const response = await API.postForm('/api/qa/generate', formData);
+        const taskId = response.task_id;
+        
+        // 显示进度
+        document.getElementById('progressCard').classList.remove('hidden');
+        document.getElementById('resultCard').classList.add('hidden');
+        document.getElementById('startBtn').classList.add('hidden');
+        document.getElementById('stopBtn').classList.remove('hidden');
+        
+        // 开始轮询任务状态
+        startPolling(taskId);
+        
+    } catch (error) {
+        console.error('生成失败:', error);
+        Message.error('生成失败: ' + error.message);
+    } finally {
+        Loading.hide(document.getElementById('startBtn'), '开始生成');
+    }
+}
+
+function updateProgress(task) {
+    const progressBar = document.getElementById('progressBar');
+    const statusSpan = document.getElementById('statusSpan');
+    
+    if (task.status === 'running') {
+        progressBar.style.width = '50%';
+        statusSpan.textContent = '正在生成问答对...';
+    } else if (task.status === 'pending') {
+        progressBar.style.width = '10%';
+        statusSpan.textContent = '任务排队中...';
+    }
+}
+
+function onComplete(task) {
+    const progressBar = document.getElementById('progressBar');
+    const statusSpan = document.getElementById('statusSpan');
+    const resultCard = document.getElementById('resultCard');
+    const resultContent = document.getElementById('resultContent');
+    
+    if (task.status === 'completed') {
+        progressBar.style.width = '100%';
+        statusSpan.textContent = '问答对生成完成！';
+        
+        // 显示结果
+        const result = task.result || {};
+        let html = `
+            <div class="alert alert-success">
+                <strong>问答对生成完成！</strong>
+            </div>
+            
+            <div class="row">
+                <div class="col-2">
+                    <div class="stat-card">
+                        <div class="stat-number">${result.qa_count || 0}</div>
+                        <div class="stat-label">生成问答对数量</div>
+                    </div>
+                </div>
+                
+                <div class="col-2">
+                    <div class="stat-card">
+                        <div class="stat-number">Excel</div>
+                        <div class="stat-label">输出格式</div>
+                        <div class="mt-2">
+                            <a href="/api/files/${result.output_file ? result.output_file.split('/').pop() : ''}" 
+                               class="btn btn-primary">下载文件</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        if (result.output_file) {
+            html += `
+                <div class="mt-3">
+                    <h3>文件信息</h3>
+                    <table class="table">
+                        <tr>
+                            <td><strong>文件名：</strong></td>
+                            <td>${result.output_file.split('/').pop()}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>问答对数量：</strong></td>
+                            <td>${result.qa_count || 0}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>生成时间：</strong></td>
+                            <td>${Utils.formatDate(task.updated_at)}</td>
+                        </tr>
+                    </table>
+                    
+                    <div class="mt-3">
+                        <a href="/api/files/${result.output_file.split('/').pop()}" class="btn btn-primary">下载Excel文件</a>
+                        <a href="/files" class="btn btn-secondary">查看所有文件</a>
+                        <a href="/dify-test" class="btn btn-success">使用此文件测试智能体</a>
+                    </div>
+                </div>
+            `;
+        }
+        
+        resultContent.innerHTML = html;
+        resultCard.classList.remove('hidden');
+        
+        Message.success('问答对生成完成！');
+        
+    } else if (task.status === 'failed') {
+        progressBar.style.width = '100%';
+        progressBar.style.backgroundColor = '#dc3545';
+        statusSpan.textContent = '问答对生成失败';
+        
+        const error = task.result?.error || '未知错误';
+        resultContent.innerHTML = `
+            <div class="alert alert-error">
+                <strong>问答对生成失败：</strong>${error}
+            </div>
+            
+            <div class="mt-3">
+                <h3>可能的解决方案：</h3>
+                <ul>
+                    <li>检查API密钥是否正确</li>
+                    <li>确认上传的文档格式正确</li>
+                    <li>检查网络连接</li>
+                    <li>尝试减少段落数量</li>
+                </ul>
+                
+                <button class="btn btn-primary" onclick="location.reload()">重新尝试</button>
+            </div>
+        `;
+        resultCard.classList.remove('hidden');
+        
+        Message.error('问答对生成失败');
+    }
+    
+    currentTaskId = null;
+    taskPoller = null;
+}
+</script>
+{% endblock %}

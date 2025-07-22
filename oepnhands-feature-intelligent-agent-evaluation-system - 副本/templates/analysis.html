@@ -1,0 +1,538 @@
+{% extends "base.html" %}
+
+{% block title %}结果分析 - 智能体评估系统{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h1 class="card-title">结果分析</h1>
+        <p class="card-subtitle">详细的答案对比和评分分析</p>
+    </div>
+    
+    <div class="row">
+        <div class="col-2">
+            <div class="form-group">
+                <label class="form-label">搜索相似度评分文件</label>
+                <input type="text" class="form-control" id="fileSearch" placeholder="搜索文件名...">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">选择分析文件</label>
+                <select class="form-control form-select" id="fileSelect">
+                    <option value="">选择要分析的文件</option>
+                </select>
+                <button type="button" class="btn btn-secondary mt-2" onclick="loadAnalysisFiles()">刷新文件列表</button>
+            </div>
+        </div>
+        
+        <div class="col-2">
+            <div class="form-group">
+                <label class="form-label">选择智能体</label>
+                <select class="form-control form-select" id="agentSelect">
+                    <option value="">选择要查看的智能体</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <button type="button" class="btn btn-primary" onclick="loadAnalysis()">开始分析</button>
+                <button type="button" class="btn btn-secondary" onclick="compareAgents()">对比智能体</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 分析结果概览 -->
+<div class="card hidden" id="overviewCard">
+    <div class="card-header">
+        <h2 class="card-title">分析概览</h2>
+    </div>
+    
+    <div id="overviewContent">
+        <!-- 动态生成概览内容 -->
+    </div>
+</div>
+
+<!-- 智能体对比 -->
+<div class="card hidden" id="comparisonCard">
+    <div class="card-header">
+        <h2 class="card-title">智能体对比</h2>
+    </div>
+    
+    <div id="comparisonContent">
+        <!-- 动态生成对比内容 -->
+    </div>
+</div>
+
+<!-- 详细对比 -->
+<div class="card hidden" id="detailCard">
+    <div class="card-header">
+        <h2 class="card-title">详细对比</h2>
+        <div>
+            <select class="form-control form-select" id="questionSelect" style="width: 400px; display: inline-block;">
+                <option value="">选择要查看的问题</option>
+            </select>
+            <select class="form-control form-select" id="sortSelect" style="width: 200px; display: inline-block; margin-left: 10px;">
+                <option value="score_desc">按评分降序</option>
+                <option value="score_asc">按评分升序</option>
+                <option value="question">按问题顺序</option>
+            </select>
+        </div>
+    </div>
+    
+    <div id="detailContent">
+        <!-- 动态生成详细内容 -->
+    </div>
+</div>
+
+<!-- 性能洞察 -->
+<div class="card hidden" id="insightCard">
+    <div class="card-header">
+        <h2 class="card-title">性能洞察</h2>
+    </div>
+    
+    <div id="insightContent">
+        <!-- 动态生成洞察内容 -->
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let currentAnalysisData = null;
+let currentQuestions = [];
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadAnalysisFiles();
+    
+    // 文件搜索
+    document.getElementById('fileSearch').addEventListener('input', filterFiles);
+    
+    // 文件选择变化
+    document.getElementById('fileSelect').addEventListener('change', function() {
+        if (this.value) {
+            loadFileAgents(this.value);
+        } else {
+            document.getElementById('agentSelect').innerHTML = '<option value="">选择要查看的智能体</option>';
+        }
+    });
+    
+    // 问题选择变化
+    document.getElementById('questionSelect').addEventListener('change', showQuestionDetail);
+    
+    // 排序变化
+    document.getElementById('sortSelect').addEventListener('change', updateQuestionList);
+});
+
+async function loadAnalysisFiles() {
+    try {
+        const files = await API.get('/api/analysis/files');
+        const select = document.getElementById('fileSelect');
+        
+        // 清空选项
+        select.innerHTML = '<option value="">选择要分析的文件</option>';
+        
+        files.forEach(file => {
+            const option = document.createElement('option');
+            option.value = file.name;
+            option.textContent = `${file.name} (${Utils.formatDate(file.modified_at)})`;
+            select.appendChild(option);
+        });
+        
+        if (files.length === 0) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = '暂无可分析的文件';
+            option.disabled = true;
+            select.appendChild(option);
+        }
+        
+    } catch (error) {
+        console.error('加载分析文件失败:', error);
+        Message.error('加载分析文件失败');
+    }
+}
+
+function filterFiles() {
+    const searchTerm = document.getElementById('fileSearch').value.toLowerCase();
+    const select = document.getElementById('fileSelect');
+    const options = select.querySelectorAll('option');
+    
+    options.forEach(option => {
+        if (option.value === '') return; // 跳过默认选项
+        
+        const text = option.textContent.toLowerCase();
+        option.style.display = text.includes(searchTerm) ? 'block' : 'none';
+    });
+}
+
+async function loadFileAgents(filename) {
+    try {
+        const analysisData = await API.get(`/api/analysis/${filename}`);
+        currentAnalysisData = analysisData;
+        
+        const agentSelect = document.getElementById('agentSelect');
+        agentSelect.innerHTML = '<option value="">选择要查看的智能体</option>';
+        
+        if (analysisData.agents) {
+            Object.keys(analysisData.agents).forEach(agentName => {
+                const option = document.createElement('option');
+                option.value = agentName;
+                option.textContent = agentName;
+                agentSelect.appendChild(option);
+            });
+        }
+        
+    } catch (error) {
+        console.error('加载智能体信息失败:', error);
+        Message.error('加载智能体信息失败');
+    }
+}
+
+async function loadAnalysis() {
+    const filename = document.getElementById('fileSelect').value;
+    const agentName = document.getElementById('agentSelect').value;
+    
+    if (!filename) {
+        Message.error('请选择要分析的文件');
+        return;
+    }
+    
+    try {
+        if (!currentAnalysisData) {
+            currentAnalysisData = await API.get(`/api/analysis/${filename}`);
+        }
+        
+        showOverview(currentAnalysisData, agentName);
+        showComparison(currentAnalysisData);
+        showInsights(currentAnalysisData);
+        
+        if (agentName) {
+            loadQuestions(filename, agentName);
+        }
+        
+    } catch (error) {
+        console.error('加载分析数据失败:', error);
+        Message.error('加载分析数据失败');
+    }
+}
+
+function showOverview(data, selectedAgent) {
+    const overviewCard = document.getElementById('overviewCard');
+    const overviewContent = document.getElementById('overviewContent');
+    
+    if (!data.agents || Object.keys(data.agents).length === 0) {
+        overviewContent.innerHTML = '<div class="alert alert-warning">暂无分析数据</div>';
+        overviewCard.classList.remove('hidden');
+        return;
+    }
+    
+    let html = '<div class="row">';
+    
+    // 显示所有智能体的统计信息
+    Object.entries(data.agents).forEach(([agentName, agentData]) => {
+        const isSelected = agentName === selectedAgent;
+        const cardClass = isSelected ? 'stat-card' : 'stat-card';
+        const borderStyle = isSelected ? 'border: 2px solid #667eea;' : '';
+        
+        html += `
+            <div class="col-3">
+                <div class="${cardClass}" style="${borderStyle}">
+                    <h3>${agentName} ${isSelected ? '(已选择)' : ''}</h3>
+                    <div class="stat-number">${agentData.mean_score.toFixed(3)}</div>
+                    <div class="stat-label">综合相似度评分均值</div>
+                    <div class="mt-2">
+                        <p><strong>高分占比：</strong>${(agentData.high_score_ratio * 100).toFixed(1)}%</p>
+                        <p><strong>低分占比：</strong>${(agentData.low_score_ratio * 100).toFixed(1)}%</p>
+                        <p><strong>问题总数：</strong>${agentData.total_questions}</p>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    
+    html += '</div>';
+    
+    // 最佳智能体标识
+    if (data.best_agent) {
+        html += `
+            <div class="alert alert-success mt-3">
+                <strong>🏆 综合相似度评分均值最高的智能体：${data.best_agent}</strong>
+            </div>
+        `;
+    }
+    
+    overviewContent.innerHTML = html;
+    overviewCard.classList.remove('hidden');
+}
+
+function showComparison(data) {
+    const comparisonCard = document.getElementById('comparisonCard');
+    const comparisonContent = document.getElementById('comparisonContent');
+    
+    if (!data.comparison || !data.comparison.ranking) {
+        comparisonContent.innerHTML = '<div class="alert alert-warning">暂无对比数据</div>';
+        comparisonCard.classList.remove('hidden');
+        return;
+    }
+    
+    let html = `
+        <div class="row">
+            <div class="col-2">
+                <h3>智能体排名</h3>
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>排名</th>
+                            <th>智能体</th>
+                            <th>平均分</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+    `;
+    
+    data.comparison.ranking.forEach((item, index) => {
+        const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : '';
+        html += `
+            <tr>
+                <td>${medal} ${index + 1}</td>
+                <td>${item.agent}</td>
+                <td>${item.score.toFixed(3)}</td>
+            </tr>
+        `;
+    });
+    
+    html += `
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="col-2">
+                <h3>评分分布</h3>
+                <div class="row">
+    `;
+    
+    // 显示每个智能体的评分分布
+    Object.entries(data.agents).forEach(([agentName, agentData]) => {
+        const distribution = agentData.score_distribution;
+        html += `
+            <div class="col-6" style="margin-bottom: 1rem;">
+                <h4>${agentName}</h4>
+                <div style="font-size: 0.9rem;">
+                    <div>优秀 (≥0.9): ${distribution.excellent}</div>
+                    <div>良好 (0.7-0.9): ${distribution.good}</div>
+                    <div>一般 (0.5-0.7): ${distribution.fair}</div>
+                    <div>较差 (<0.5): ${distribution.poor}</div>
+                </div>
+            </div>
+        `;
+    });
+    
+    html += '</div></div></div>';
+    
+    comparisonContent.innerHTML = html;
+    comparisonCard.classList.remove('hidden');
+}
+
+async function loadQuestions(filename, agentName) {
+    try {
+        // 这里应该调用API获取详细的问题数据
+        // 暂时使用分析数据中的问题信息
+        if (currentAnalysisData && currentAnalysisData.agents && currentAnalysisData.agents[agentName]) {
+            currentQuestions = currentAnalysisData.agents[agentName].questions || [];
+            updateQuestionList();
+            document.getElementById('detailCard').classList.remove('hidden');
+        }
+        
+    } catch (error) {
+        console.error('加载问题数据失败:', error);
+        Message.error('加载问题数据失败');
+    }
+}
+
+function updateQuestionList() {
+    const questionSelect = document.getElementById('questionSelect');
+    const sortBy = document.getElementById('sortSelect').value;
+    
+    // 排序问题
+    let sortedQuestions = [...currentQuestions];
+    
+    switch (sortBy) {
+        case 'score_desc':
+            sortedQuestions.sort((a, b) => b.weighted_score - a.weighted_score);
+            break;
+        case 'score_asc':
+            sortedQuestions.sort((a, b) => a.weighted_score - b.weighted_score);
+            break;
+        case 'question':
+            // 保持原顺序
+            break;
+    }
+    
+    // 更新选择框
+    questionSelect.innerHTML = '<option value="">选择要查看的问题</option>';
+    
+    sortedQuestions.forEach((question, index) => {
+        const option = document.createElement('option');
+        option.value = index;
+        const questionText = question.question.length > 50 ? 
+            question.question.substring(0, 50) + '...' : question.question;
+        option.textContent = `${questionText} (评分: ${question.weighted_score.toFixed(3)})`;
+        questionSelect.appendChild(option);
+    });
+}
+
+function showQuestionDetail() {
+    const questionIndex = document.getElementById('questionSelect').value;
+    const detailContent = document.getElementById('detailContent');
+    
+    if (questionIndex === '' || !currentQuestions[questionIndex]) {
+        detailContent.innerHTML = '<div class="alert alert-info">请选择要查看的问题</div>';
+        return;
+    }
+    
+    const question = currentQuestions[questionIndex];
+    
+    let html = `
+        <div class="row">
+            <div class="col">
+                <h3>问题</h3>
+                <div class="card" style="margin-bottom: 1rem;">
+                    <div style="padding: 1rem;">
+                        ${question.question}
+                    </div>
+                </div>
+                
+                <h3>标准答案</h3>
+                <div class="card" style="margin-bottom: 1rem;">
+                    <div style="padding: 1rem;">
+                        ${question.standard_answer}
+                    </div>
+                </div>
+                
+                <h3>智能体答案</h3>
+                <div class="card" style="margin-bottom: 1rem;">
+                    <div style="padding: 1rem;">
+                        ${question.generated_answer}
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-3">
+                <div class="stat-card">
+                    <div class="stat-number">${question.cosine_similarity.toFixed(3)}</div>
+                    <div class="stat-label">余弦相似度</div>
+                </div>
+            </div>
+            
+            <div class="col-3">
+                <div class="stat-card">
+                    <div class="stat-number">${question.jaccard_similarity.toFixed(3)}</div>
+                    <div class="stat-label">Jaccard相似度</div>
+                </div>
+            </div>
+            
+            <div class="col-3">
+                <div class="stat-card">
+                    <div class="stat-number">${question.weighted_score.toFixed(3)}</div>
+                    <div class="stat-label">综合相似度评分</div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    detailContent.innerHTML = html;
+}
+
+function showInsights(data) {
+    const insightCard = document.getElementById('insightCard');
+    const insightContent = document.getElementById('insightContent');
+    
+    // 这里可以添加更复杂的洞察分析
+    let html = `
+        <div class="row">
+            <div class="col-2">
+                <h3>整体表现</h3>
+                <ul>
+                    <li>参与评估的智能体数量：${Object.keys(data.agents || {}).length}</li>
+                    <li>最佳表现智能体：${data.best_agent || '未知'}</li>
+                    <li>平均评分范围：${getScoreRange(data)}</li>
+                </ul>
+            </div>
+            
+            <div class="col-2">
+                <h3>改进建议</h3>
+                <ul id="recommendations">
+                    <!-- 动态生成建议 -->
+                </ul>
+            </div>
+        </div>
+    `;
+    
+    insightContent.innerHTML = html;
+    
+    // 生成改进建议
+    generateRecommendations(data);
+    
+    insightCard.classList.remove('hidden');
+}
+
+function getScoreRange(data) {
+    if (!data.agents || Object.keys(data.agents).length === 0) {
+        return '无数据';
+    }
+    
+    const scores = Object.values(data.agents).map(agent => agent.mean_score);
+    const minScore = Math.min(...scores);
+    const maxScore = Math.max(...scores);
+    
+    return `${minScore.toFixed(3)} - ${maxScore.toFixed(3)}`;
+}
+
+function generateRecommendations(data) {
+    const recommendationsList = document.getElementById('recommendations');
+    const recommendations = [];
+    
+    if (data.agents) {
+        Object.entries(data.agents).forEach(([agentName, agentData]) => {
+            if (agentData.low_score_ratio > 0.3) {
+                recommendations.push(`${agentName}: 低分回答占比较高 (${(agentData.low_score_ratio * 100).toFixed(1)}%)，建议优化模型或提示词`);
+            }
+            
+            if (agentData.mean_score < 0.6) {
+                recommendations.push(`${agentName}: 整体表现需要改进，平均分仅为 ${agentData.mean_score.toFixed(3)}`);
+            }
+        });
+    }
+    
+    if (recommendations.length === 0) {
+        recommendations.push('所有智能体表现良好，继续保持！');
+    }
+    
+    recommendationsList.innerHTML = recommendations.map(rec => `<li>${rec}</li>`).join('');
+}
+
+async function compareAgents() {
+    const filename = document.getElementById('fileSelect').value;
+    
+    if (!filename) {
+        Message.error('请选择要分析的文件');
+        return;
+    }
+    
+    try {
+        if (!currentAnalysisData) {
+            currentAnalysisData = await API.get(`/api/analysis/${filename}`);
+        }
+        
+        showComparison(currentAnalysisData);
+        Message.success('智能体对比完成');
+        
+    } catch (error) {
+        console.error('对比智能体失败:', error);
+        Message.error('对比智能体失败');
+    }
+}
+</script>
+{% endblock %}
